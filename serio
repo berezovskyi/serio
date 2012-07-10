@@ -1,18 +1,88 @@
 #!/usr/bin/env python
-# Small utility to upload a file to an embedded Linux system that provides a shell
-# via its serial port.
+# Small utility to upload/downlaod files to an embedded Linux system via a serial port shell.
 
 import serial
-import sys, time
+import sys, os.path, time
 from getopt import GetoptError, getopt as GetOpt
+
+class ParseMinicom:
+
+	PATH = "/etc/minicom/"
+	PREFIX = "minirc."
+	CONF = {'baudrate' : None, 'port' : None}
+
+	def __init__(self, name):
+		path = self.PATH + self.PREFIX + name
+		
+		for line in open(path).readlines():
+			for key,value in self.CONF.iteritems():
+				if line.startswith('pu ' + key):
+					self.CONF[key] = line.split(key)[1].strip()
+
+	def setting(self, name):
+		if self.CONF.has_key(name):
+			return self.CONF[name]
+		else:
+			return None
+
+	def baudrate(self):
+		return self.setting('baudrate')
+
+	def port(self):
+		return self.setting('port')
+
+class SerialCP:
+
+	DELIM="THIS IS THE END, BEAUTIFUL FRIEND"
+
+	def __init__(self, port=None, baudrate=None, callback=None):
+		self.callback = callback
+
+		self.serial = serial.Serial(port=port, baudrate=baudrate)
+		self.serial.open()
+
+	def cmd(self, command):
+		self.serial.write(command + "\n")
+		self.serial.readline()
+
+	def readuntil(self, delim=DELIM):
+		data = ""
+
+		while not data.endswith(delim):
+			data += self.serial.read(1)
+			if self.callback is not None:
+				self.callback(len(data), len(data))
+
+		return data[0:-len(delim)]
+
+	def get(self, remote, local):
+		retval = 0
+
+		self.cmd("cat '%s' && echo '%s'" % (remote, self.DELIM))
+		data = self.readuntil(self.DELIM)
+
+		# Catting data over the serial port turns all \n's to \r\n's
+		data = data.replace("\r\n", "\n")
+
+		if local and local is not None:
+			try:
+				open(local, 'wb').write(data)
+				retval = len(data)
+			except:
+				pass
+		return retval
+
+	def close(self):
+		self.serial.close()
+
 
 class SerialFTP:
 
 	IO_TIME = .1
 	BYTES_PER_LINE = 20
 
-	def __init__(self, port=None, baudrate=None, time=None, quiet=None):
-		self.quiet = quiet
+	def __init__(self, port=None, baudrate=None, time=None, callback=None):
+		self.callback = callback
 		if time is not None:
 			self.IO_TIME = time
 		self.s = serial.Serial(port=port, baudrate=baudrate)
@@ -41,8 +111,8 @@ class SerialFTP:
 			self.write('\necho -ne "%s" >> %s\n' % (dpart, destination))
 
 			# Show upload status
-			if not self.quiet:
-				print "%d / %d" % (i, data_size)
+			if self.callback is not None:
+				self.callback(i, data_size)
 
 		return i
 
@@ -59,14 +129,27 @@ class SerialFTP:
 
 
 
+def progress(self, current, total):
+	if current > total:
+		current = total
+
+	percent = (current / float(total)) * 100
+	marks = int(math.floor(percent / 2))
+	markstring = "#" * marks
+	dotstring = "." * (50 - marks)
+	sys.stdout.write("\r[%s%s] %0.2f%% (%d / %d)" % (markstring, dotstring, percent, current, total))
+	sys.stdout.flush()
+
 def usage():
 	print '\nUsage: %s [OPTIONS]\n' % sys.argv[0]
+	print '\t-g, --get                              Get a file from the remote system'
+	print '\t-p, --put                              Put a file to the remote system'
 	print '\t-s, --source=<local file>              Path to local file'
 	print '\t-d, --destination=<remote file>        Path to remote file'
-	print '\t-p, --port=<serial port>               Serial port to use [/dev/ttyUSB0]'
+	print '\t-m, --minicom=<name>                   Name of a minicom config file'
+	print '\t-y, --port=<serial port>               Serial port to use [/dev/ttyUSB0]'
 	print '\t-b, --baudrate=<baud>                  Serial port baud rate [115200]'
 	print '\t-t, --time=<seconds>                   Time to wait between echo commands [0.1]'
-	print '\t-q, --quiet                            Supress status messages'
 	print '\t-h, --help                             Show help'
 	print ''
 	sys.exit(1)
@@ -75,19 +158,20 @@ def main():
 
 	port = '/dev/ttyUSB0'
 	baudrate = 115200
-	source = None
-	destination = None
 	time = None
-	quiet = False
+	source = None
+	action = None
+	minicom = None
+	destination = None
 
 	try:
-		opts, args = GetOpt(sys.argv[1:],'p:b:s:d:t:qh', ['port=', 'baudrate=', 'source=', 'destination=', 'time=', 'quiet', 'help'])
+		opts, args = GetOpt(sys.argv[1:],'y:b:s:d:t:m:gph', ['port=', 'baudrate=', 'source=', 'destination=', 'time=', 'minicom', 'get', 'put', 'help'])
 	except GetoptError, e:
 		print 'Usage error:', e
 		usage()
 
 	for opt, arg in opts:
-		if opt in ('-p', '--port'):
+		if opt in ('-y', '--port'):
 			port = arg
 		elif opt in ('-b', '--baudrate'):
 			baudrate = arg
@@ -97,23 +181,46 @@ def main():
 			destination = arg
 		elif opt in ('-t', '--time'):
 			time = arg
-		elif opt in ('-q', '--quiet'):
-			quiet = True
+		elif opt in ('-m', '--minicom'):
+			minicom = ParseMinicom(arg)
+		elif opt in ('-p', '--put'):
+			action = 'put'
+		elif opt in ('-g', '--get'):
+			action = 'get'
 		elif opt in ('-h', '--help'):
 			usage()
+
+	if action is None:
+		print 'Usage error: must specify either -g or -p options'
+		usage()
 
 	if not source or not destination:
 		print 'Usage error: must specify -s and -d options'
 		usage()
 
-	try:
-		sftp = SerialFTP(port=port, baudrate=baudrate, time=time, quiet=quiet)
-		size = sftp.put(source, destination)
-		sftp.close()
+	if minicom is not None:
+		port = minicom.port()
+		baudrate = minicom.baudrate()
+
+	if action == 'put':
+		try:
+			sftp = SerialFTP(port=port, baudrate=baudrate, time=time, callback=progress)
+			size = sftp.put(source, destination)
+			sftp.close()
 		
-		print 'Uploaded %d bytes from %s to %s' % (size, source, destination)
-	except Exception, e:
-		print "ERROR:", e
+			print 'Uploaded %d bytes from %s to %s' % (size, source, destination)
+		except Exception, e:
+			print "ERROR:", e
+	else:
+		try:
+			scp = SerialCP(port=port, baudrate=baudrate, callback=progress)
+			size = scp.get(source, destination)
+			scp.close()
+
+			print 'Downloaded %d bytes from %s to %s' % (size, source, destination)
+		except Exception, e:
+			print "ERROR:", e
+
 
 
 if __name__ == '__main__':
