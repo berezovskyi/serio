@@ -2,7 +2,7 @@
 # Small utility to upload/downlaod files to an embedded Linux system via a serial port shell.
 
 import serial
-import sys, os.path, time
+import sys, os.path, math, time
 from getopt import GetoptError, getopt as GetOpt
 
 class ParseMinicom:
@@ -34,6 +34,7 @@ class ParseMinicom:
 class SerialCP:
 
 	DELIM="THIS IS THE END, BEAUTIFUL FRIEND"
+	CALLBACK_INTERVAL = 256
 
 	def __init__(self, port=None, baudrate=None, callback=None):
 		self.callback = callback
@@ -47,13 +48,19 @@ class SerialCP:
 
 	def readuntil(self, delim=DELIM):
 		data = ""
+		count = 0
 
 		while not data.endswith(delim):
 			data += self.serial.read(1)
-			if self.callback is not None:
-				self.callback(len(data), len(data))
+			if self.callback is not None and count == self.CALLBACK_INTERVAL:
+				count = 0
+				self.callback((len(data)-len(delim)), (len(data)-len(delim)))
+			else:
+				count += 1
 
-		return data[0:-len(delim)]
+		data = data[0:-len(delim)]
+
+		return data
 
 	def get(self, remote, local):
 		retval = 0
@@ -63,6 +70,9 @@ class SerialCP:
 
 		# Catting data over the serial port turns all \n's to \r\n's
 		data = data.replace("\r\n", "\n")
+
+		if self.callback is not None:
+			self.callback(len(data), len(data))
 
 		if local and local is not None:
 			try:
@@ -129,7 +139,7 @@ class SerialFTP:
 
 
 
-def progress(self, current, total):
+def progress(current, total):
 	if current > total:
 		current = total
 
@@ -194,9 +204,12 @@ def main():
 		print 'Usage error: must specify either -g or -p options'
 		usage()
 
-	if not source or not destination:
-		print 'Usage error: must specify -s and -d options'
+	if not source:
+		print 'Usage error: must specify the -s option'
 		usage()
+
+	if destination is None or destination == ".":
+		destination = os.path.basename(source)
 
 	if minicom is not None:
 		port = minicom.port()
@@ -208,7 +221,7 @@ def main():
 			size = sftp.put(source, destination)
 			sftp.close()
 		
-			print 'Uploaded %d bytes from %s to %s' % (size, source, destination)
+			print '\nUploaded %d bytes from %s to %s' % (size, source, destination)
 		except Exception, e:
 			print "ERROR:", e
 	else:
@@ -217,7 +230,7 @@ def main():
 			size = scp.get(source, destination)
 			scp.close()
 
-			print 'Downloaded %d bytes from %s to %s' % (size, source, destination)
+			print '\nDownloaded %d bytes from %s to %s' % (size, source, destination)
 		except Exception, e:
 			print "ERROR:", e
 
