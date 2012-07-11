@@ -144,9 +144,9 @@ def usage():
 	print '\nUsage: %s [OPTIONS]\n' % sys.argv[0]
 	print '\t-g, --get                              Get a file from the remote system'
 	print '\t-p, --put                              Put a file to the remote system'
-	print '\t-s, --source=<local file>              Path to local file'
-	print '\t-d, --destination=<remote file>        Path to remote file'
-	print '\t-m, --minicom=<name>                   Name of a minicom config file'
+	print '\t-s, --source=<file path>               Path to source file'
+	print '\t-d, --destination=<file path>          Path to destination file'
+	print '\t-m, --minicom=<name>                   Name of the minicom config file to use'
 	print '\t-y, --port=<serial port>               Serial port to use [/dev/ttyUSB0]'
 	print '\t-b, --baudrate=<baud>                  Serial port baud rate [115200]'
 	print '\t-t, --time=<seconds>                   Time to wait between echo commands [0.1]'
